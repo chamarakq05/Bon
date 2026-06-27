@@ -63,11 +63,11 @@ async def login_and_navigate(playwright):
 
     # Click login button
     try:
-        await page.click("text=Log in", timeout=10000)
+        await page.click("text=Log in", timeout=110000)
         await asyncio.sleep(2)
     except:
         try:
-            await page.click("[class*='login']", timeout=5000)
+            await page.click("[class*='login']", timeout=15000)
             await asyncio.sleep(2)
         except:
             print("[LOGIN] Login button not found via text, trying direct URL...")
@@ -77,13 +77,13 @@ async def login_and_navigate(playwright):
     # Fill credentials
     print("[LOGIN] Entering credentials...")
     try:
-        await page.fill("input[name='login']", XBET_USERNAME, timeout=10000)
-        await page.fill("input[name='password']", XBET_PASSWORD, timeout=10000)
-        await page.click("button[type='submit']", timeout=10000)
+        await page.fill("input[name='login']", XBET_USERNAME, timeout=110000)
+        await page.fill("input[name='password']", XBET_PASSWORD, timeout=110000)
+        await page.click("button[type='submit']", timeout=110000)
     except:
         # Try alternative selectors
-        await page.fill("input[type='text']", XBET_USERNAME, timeout=10000)
-        await page.fill("input[type='password']", XBET_PASSWORD, timeout=10000)
+        await page.fill("input[type='text']", XBET_USERNAME, timeout=110000)
+        await page.fill("input[type='password']", XBET_PASSWORD, timeout=110000)
         await page.keyboard.press("Enter")
 
     await asyncio.sleep(5)
@@ -94,7 +94,7 @@ async def login_and_navigate(playwright):
     await page.goto(
         "https://1xbet.com/en/live/casino",
         wait_until="domcontentloaded",
-        timeout=30000
+        timeout=130000
     )
     await asyncio.sleep(3)
 
@@ -102,7 +102,7 @@ async def login_and_navigate(playwright):
     try:
         await page.fill("input[placeholder*='Search']", "Mega Sic Bo", timeout=8000)
         await asyncio.sleep(2)
-        await page.click("text=Mega Sic Bo", timeout=8000)
+        await page.click("text=Mega Sic Bo", timeout=18000)
         await asyncio.sleep(5)
     except:
         print("[NAV] Search failed, trying direct navigation...")
