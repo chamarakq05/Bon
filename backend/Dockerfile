@@ -2,10 +2,11 @@ FROM mcr.microsoft.com/playwright/python:v1.40.0-jammy
 
 WORKDIR /app
 
-COPY COPY backend/requirements.txt  .
+COPY backend/requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY COPY backend/ .
+COPY backend/ .
 
 EXPOSE 8000
 
