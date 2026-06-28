@@ -3,9 +3,8 @@ import json
 import base64
 import asyncio
 import threading
-import time
 from datetime import datetime
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 from playwright.async_api import async_playwright
 import anthropic
@@ -13,7 +12,6 @@ import anthropic
 app = Flask(__name__)
 CORS(app)
 
-# In-memory storage (persists while Railway container runs)
 data_store = {
     "rounds": [],
     "status": "idle",
@@ -26,18 +24,17 @@ client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
 XBET_USERNAME = os.environ.get("XBET_USERNAME")
 XBET_PASSWORD = os.environ.get("XBET_PASSWORD")
-SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL", "15"))  # seconds
+SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL", "15"))
 
-# Global browser state
 browser_context = None
 page_ref = None
 loop = None
 
 
 async def login_and_navigate(playwright):
-    """Login to 1xBet and navigate to Mega Sic Bo"""
     global browser_context, page_ref
 
+    print("[BROWSER] Launching Chromium...")
     browser = await playwright.chromium.launch(
         headless=True,
         args=[
@@ -45,103 +42,134 @@ async def login_and_navigate(playwright):
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
             "--disable-gpu",
-            "--window-size=1280,720"
+            "--disable-web-security",
+            "--window-size=1280,800"
         ]
     )
 
     context = await browser.new_context(
-        viewport={"width": 1280, "height": 720},
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        viewport={"width": 1280, "height": 800},
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        ignore_https_errors=True
     )
 
     page = await context.new_page()
+    page.set_default_timeout(120000)  # 2 minutes global timeout
 
-    # Go to 1xBet
-    print("[LOGIN] Navigating to 1xbet.com...")
-    await page.goto("https://1xbet.com/en/live/casino", wait_until="domcontentloaded", timeout=60000)
-    await asyncio.sleep(3)
-
-    # Click login button
+    # Step 1: Go directly to login page
+    print("[LOGIN] Going to login page...")
     try:
-        await page.click("text=Log in", timeout=110000)
-        await asyncio.sleep(2)
-    except:
-        try:
-            await page.click("[class*='login']", timeout=15000)
-            await asyncio.sleep(2)
-        except:
-            print("[LOGIN] Login button not found via text, trying direct URL...")
-            await page.goto("https://1xbet.com/en/login", wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(2)
-
-    # Fill credentials
-    print("[LOGIN] Entering credentials...")
-    try:
-        await page.fill("input[name='login']", XBET_USERNAME, timeout=110000)
-        await page.fill("input[name='password']", XBET_PASSWORD, timeout=110000)
-        await page.click("button[type='submit']", timeout=110000)
-    except:
-        # Try alternative selectors
-        await page.fill("input[type='text']", XBET_USERNAME, timeout=110000)
-        await page.fill("input[type='password']", XBET_PASSWORD, timeout=110000)
-        await page.keyboard.press("Enter")
+        await page.goto(
+            "https://1xbet.com/en/login",
+            wait_until="domcontentloaded",
+            timeout=120000
+        )
+    except Exception as e:
+        print(f"[LOGIN] Direct login page failed: {e}, trying main page...")
+        await page.goto(
+            "https://1xbet.com",
+            wait_until="domcontentloaded",
+            timeout=120000
+        )
 
     await asyncio.sleep(5)
-    print("[LOGIN] Login submitted, waiting...")
+    print(f"[LOGIN] Page loaded: {page.url}")
 
-    # Navigate to Mega Sic Bo
-    print("[NAV] Searching for Mega Sic Bo...")
-    await page.goto(
-        "https://1xbet.com/en/live/casino",
-        wait_until="domcontentloaded",
-        timeout=130000
-    )
-    await asyncio.sleep(3)
+    # Step 2: Fill login form
+    print("[LOGIN] Filling credentials...")
+    filled = False
 
-    # Search for Mega Sic Bo
+    # Try multiple selector strategies
+    selectors_user = [
+        "input[name='login']",
+        "input[name='user']",
+        "input[name='username']",
+        "input[type='text']:visible",
+        "input[placeholder*='Login']",
+        "input[placeholder*='login']",
+        "input[placeholder*='Email']",
+    ]
+
+    selectors_pass = [
+        "input[name='password']",
+        "input[type='password']:visible",
+        "input[placeholder*='Password']",
+        "input[placeholder*='password']",
+    ]
+
+    for sel in selectors_user:
+        try:
+            await page.fill(sel, XBET_USERNAME, timeout=5000)
+            print(f"[LOGIN] Username filled with: {sel}")
+            filled = True
+            break
+        except:
+            continue
+
+    if not filled:
+        # Take screenshot to debug
+        ss = await page.screenshot(type="jpeg", quality=70)
+        b64 = base64.standard_b64encode(ss).decode()
+        data_store["debug_screenshot"] = b64
+        raise Exception("Could not find username input field")
+
+    for sel in selectors_pass:
+        try:
+            await page.fill(sel, XBET_PASSWORD, timeout=5000)
+            print(f"[LOGIN] Password filled with: {sel}")
+            break
+        except:
+            continue
+
+    # Submit
     try:
-        await page.fill("input[placeholder*='Search']", "Mega Sic Bo", timeout=8000)
-        await asyncio.sleep(2)
-        await page.click("text=Mega Sic Bo", timeout=18000)
-        await asyncio.sleep(5)
+        await page.click("button[type='submit']", timeout=10000)
     except:
-        print("[NAV] Search failed, trying direct navigation...")
-        # Try Pragmatic Play Mega Sic Bo direct URL patterns
-        urls_to_try = [
-            "https://1xbet.com/en/casino/game/pragmatic-play-mega-sic-bo",
-            "https://1xbet.com/en/live-casino/game/mega-sic-bo",
-        ]
-        for url in urls_to_try:
-            try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                await asyncio.sleep(3)
-                break
-            except:
-                continue
+        await page.keyboard.press("Enter")
+
+    print("[LOGIN] Submitted, waiting for redirect...")
+    await asyncio.sleep(8)
+    print(f"[LOGIN] After login URL: {page.url}")
+
+    # Step 3: Navigate to Mega Sic Bo
+    print("[NAV] Navigating to Mega Sic Bo...")
+
+    # Try direct game URLs
+    game_urls = [
+        "https://1xbet.com/en/live-casino/game/mega-sic-bo",
+        "https://1xbet.com/en/casino/game/pragmatic-play-mega-sic-bo",
+        "https://1xbet.com/en/live/casino",
+    ]
+
+    for url in game_urls:
+        try:
+            print(f"[NAV] Trying: {url}")
+            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(5)
+            print(f"[NAV] Loaded: {page.url}")
+            break
+        except Exception as e:
+            print(f"[NAV] Failed {url}: {e}")
+            continue
 
     browser_context = context
     page_ref = page
-    print("[NAV] Ready to scan!")
+    print("[NAV] Browser ready!")
     return page
 
 
 async def capture_and_ocr():
-    """Take screenshot and extract Sic Bo data via Claude"""
     global page_ref
-
     if not page_ref:
         return None
 
-    # Take screenshot
     screenshot_bytes = await page_ref.screenshot(
         full_page=False,
         type="jpeg",
         quality=85
     )
-
     b64 = base64.standard_b64encode(screenshot_bytes).decode()
 
-    # Claude OCR
     message = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=400,
@@ -150,34 +178,28 @@ async def capture_and_ocr():
             "content": [
                 {
                     "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "image/jpeg",
-                        "data": b64
-                    }
+                    "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}
                 },
                 {
                     "type": "text",
                     "text": """This is a 1xBet Mega Sic Bo live casino screenshot.
 
-Extract these values:
-1. DICE TOTAL - the main number shown (4-17), visible in the spinning circle/display
-2. CHIP SEQUENCE - bottom row numbers like "3 3 4 10" or "1 3 6 10 25x"  
+Extract:
+1. DICE TOTAL - main number (4-17) in the circle
+2. CHIP SEQUENCE - bottom row like "3 3 4 10" or "1 3 6 10 25x"
 3. RESULT TYPE - BIG(11-17), SMALL(4-10), ODD, EVEN, or TRIPLE
-4. GAME ID - the ID number shown (e.g. 15607313722)
-5. BALANCE - Rs amount shown
+4. GAME ID - ID number shown
+5. BALANCE - Rs amount
 
 Return ONLY valid JSON:
 {
   "dice_total": <integer or null>,
   "big_small": "<BIG|SMALL|ODD|EVEN|TRIPLE|null>",
-  "chips": "<string like '3 3 4 10' or null>",
+  "chips": "<string or null>",
   "game_id": "<string or null>",
   "balance": "<string or null>",
-  "game_visible": <true if Sic Bo game is visible, false otherwise>
-}
-
-If game result not yet shown (dice rolling), set dice_total to null."""
+  "game_visible": <true/false>
+}"""
                 }
             ]
         }]
@@ -186,20 +208,19 @@ If game result not yet shown (dice rolling), set dice_total to null."""
     text = message.content[0].text
     clean = text.replace("```json", "").replace("```", "").strip()
     result = json.loads(clean)
-    result["screenshot_b64"] = b64  # store for frontend preview
+    result["screenshot_b64"] = b64
     return result
 
 
 async def scan_loop():
-    """Main scanning loop"""
     global data_store
 
     async with async_playwright() as playwright:
         try:
             data_store["status"] = "logging_in"
+            data_store["error"] = None
             await login_and_navigate(playwright)
             data_store["status"] = "scanning"
-            data_store["error"] = None
 
             last_game_id = None
             last_total = None
@@ -213,7 +234,6 @@ async def scan_loop():
                         game_id = result.get("game_id")
                         chips = result.get("chips")
 
-                        # Only save if new round (different game_id or different total)
                         is_new = (
                             dice_total is not None and
                             (game_id != last_game_id or dice_total != last_total)
@@ -229,28 +249,24 @@ async def scan_loop():
                                 "balance": result.get("balance"),
                                 "timestamp": datetime.now().isoformat(),
                                 "time": datetime.now().strftime("%H:%M:%S"),
-                                "preview": result.get("screenshot_b64", "")[:100]  # truncate for storage
                             }
                             data_store["rounds"].insert(0, entry)
-
-                            # Keep last 500 rounds
                             if len(data_store["rounds"]) > 500:
                                 data_store["rounds"] = data_store["rounds"][:500]
 
                             last_game_id = game_id
                             last_total = dice_total
-                            print(f"[DATA] Round {entry['id']}: Total={dice_total} {result.get('big_small')} | Chips: {chips}")
+                            print(f"[DATA] Round {entry['id']}: {dice_total} {result.get('big_small')} | {chips}")
 
                         data_store["last_scan"] = datetime.now().isoformat()
 
-                    elif result and not result.get("game_visible"):
-                        print("[SCAN] Game not visible, waiting...")
+                    else:
+                        print(f"[SCAN] Game not visible yet...")
 
                 except Exception as e:
                     print(f"[SCAN ERROR] {e}")
                     data_store["error"] = str(e)
 
-                # Wait for next scan
                 await asyncio.sleep(SCAN_INTERVAL)
 
         except Exception as e:
@@ -261,14 +277,11 @@ async def scan_loop():
 
 
 def run_async_loop():
-    """Run async scan loop in background thread"""
     global loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(scan_loop())
 
-
-# ─── API Routes ───────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -279,9 +292,8 @@ def index():
 def start_scan():
     if data_store["scanning"]:
         return jsonify({"ok": False, "msg": "Already scanning"})
-
     if not XBET_USERNAME or not XBET_PASSWORD:
-        return jsonify({"ok": False, "msg": "XBET_USERNAME / XBET_PASSWORD env vars not set"})
+        return jsonify({"ok": False, "msg": "XBET_USERNAME / XBET_PASSWORD not set"})
 
     data_store["scanning"] = True
     data_store["status"] = "starting"
@@ -289,7 +301,6 @@ def start_scan():
 
     t = threading.Thread(target=run_async_loop, daemon=True)
     t.start()
-
     return jsonify({"ok": True, "msg": "Scan started"})
 
 
@@ -297,7 +308,7 @@ def start_scan():
 def stop_scan():
     data_store["scanning"] = False
     data_store["status"] = "idle"
-    return jsonify({"ok": True, "msg": "Scan stopped"})
+    return jsonify({"ok": True})
 
 
 @app.route("/api/status")
@@ -315,9 +326,7 @@ def get_status():
 def get_rounds():
     limit = int(request.args.get("limit", 100))
     rounds = data_store["rounds"][:limit]
-    # Remove large screenshot data from list response
-    clean = [{k: v for k, v in r.items() if k != "preview"} for r in rounds]
-    return jsonify({"rounds": clean, "total": len(data_store["rounds"])})
+    return jsonify({"rounds": rounds, "total": len(data_store["rounds"])})
 
 
 @app.route("/api/rounds/clear", methods=["POST"])
@@ -328,14 +337,22 @@ def clear_rounds():
 
 @app.route("/api/export/csv")
 def export_csv():
-    from flask import Response
     rows = data_store["rounds"]
     lines = ["Round,Dice Total,Big/Small,Chips,Game ID,Time"]
     for r in reversed(rows):
-        lines.append(f"{r['id']},{r['dice_total']},{r['big_small']},{r.get('chips','')},{r.get('game_id','')},{r['time']}")
-    csv = "\n".join(lines)
-    return Response(csv, mimetype="text/csv",
+        lines.append(f"{r['id']},{r['dice_total']},{r.get('big_small','')},{r.get('chips','')},{r.get('game_id','')},{r['time']}")
+    csv_data = "\n".join(lines)
+    return Response(csv_data, mimetype="text/csv",
                     headers={"Content-Disposition": "attachment;filename=sicbo_data.csv"})
+
+
+@app.route("/api/debug/screenshot")
+def debug_screenshot():
+    """Get latest screenshot for debugging"""
+    ss = data_store.get("debug_screenshot")
+    if ss:
+        return jsonify({"screenshot": ss})
+    return jsonify({"error": "No screenshot available"})
 
 
 if __name__ == "__main__":
