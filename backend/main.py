@@ -83,10 +83,9 @@ async def setup_browser(playwright):
 
     # Navigate to Mega Sic Bo
     game_urls = [
-        "https://1xbet.com/en/live-casino/game/mega-sic-bo",
-        "https://lk.1xbet.com/en/live-casino/game/mega-sic-bo",
-        "https://1xbet.com/en/casino/game/pragmatic-play-mega-sic-bo",
-    ]
+    "https://lk.1xbet.com/en/casino-search?game=56264",
+    "https://lk.1xbet.com/en/live-casino",
+]
 
     loaded = False
     for url in game_urls:
