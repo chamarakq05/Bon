@@ -27,34 +27,29 @@ XBET_USERNAME = os.environ.get("XBET_USERNAME", "")
 XBET_PASSWORD = os.environ.get("XBET_PASSWORD", "")
 GAME_URL = "https://lk.1xbet.com/en/casino-search?game=56264"
 
-browser_context = None
 page_ref = None
 loop = None
 
 
 async def inject_cookies(context):
+    """Inject cookies to all possible domains including mirror"""
     try:
         cookies_raw = json.loads(XBET_COOKIES_JSON)
-        playwright_cookies = []
+        pw_cookies = []
+        mirror_domains = [
+            '.1xlite-03864.pro', '1xlite-03864.pro',
+            'lk.1xbet.com', '.1xbet.com'
+        ]
         for c in cookies_raw:
-            cookie = {
-                "name": c["name"],
-                "value": c["value"],
-                "domain": c["domain"],
-                "path": c.get("path", "/"),
-                "secure": c.get("secure", False),
-                "httpOnly": c.get("httpOnly", False),
-            }
-            if not c.get("session", True) and c.get("expirationDate"):
-                cookie["expires"] = int(c["expirationDate"])
-            ss = c.get("sameSite")
-            if ss and ss not in [None, "null", "no_restriction"]:
-                mapped = ss.capitalize()
-                if mapped in ["Strict", "Lax", "None"]:
-                    cookie["sameSite"] = mapped
-            playwright_cookies.append(cookie)
-        await context.add_cookies(playwright_cookies)
-        print(f"[COOKIES] Injected {len(playwright_cookies)} cookies")
+            for domain in mirror_domains:
+                pw_cookies.append({
+                    'name': c['name'],
+                    'value': c['value'],
+                    'domain': domain,
+                    'path': '/'
+                })
+        await context.add_cookies(pw_cookies)
+        print(f"[COOKIES] Injected to all domains")
         return True
     except Exception as e:
         print(f"[COOKIES ERROR] {e}")
@@ -62,14 +57,13 @@ async def inject_cookies(context):
 
 
 async def do_login(page):
-    """Login with username/password"""
-    print("[LOGIN] Attempting login with credentials...")
+    """Login with username/password as fallback"""
+    print("[LOGIN] Trying credentials login...")
     try:
         await page.goto("https://lk.1xbet.com/en/login",
                         wait_until="domcontentloaded", timeout=60000)
-        await asyncio.sleep(4)
+        await asyncio.sleep(5)
 
-        # Fill credentials via JS (most reliable)
         await page.evaluate(f"""
             () => {{
                 const inputs = document.querySelectorAll('input');
@@ -77,7 +71,7 @@ async def do_login(page):
                 for(const inp of inputs) {{
                     const t = inp.type.toLowerCase();
                     const n = (inp.name || inp.placeholder || '').toLowerCase();
-                    if(!u && (t==='text'||t==='email'||n.includes('login')||n.includes('user')||n.includes('email'))) {{
+                    if(!u && (t==='text'||t==='email'||n.includes('login')||n.includes('user'))) {{
                         inp.value = '{XBET_USERNAME}';
                         inp.dispatchEvent(new Event('input', {{bubbles:true}}));
                         inp.dispatchEvent(new Event('change', {{bubbles:true}}));
@@ -92,33 +86,22 @@ async def do_login(page):
             }}
         """)
         await asyncio.sleep(1)
-
-        # Submit
         try:
             await page.click("button[type='submit']", timeout=8000)
         except:
             await page.keyboard.press("Enter")
-
         await asyncio.sleep(6)
-        print(f"[LOGIN] After login: {page.url}")
-
-        # Check if login worked
-        if "login" not in page.url and "block" not in page.url:
-            print("[LOGIN] Login successful!")
-            return True
-        else:
-            print("[LOGIN] Login may have failed")
-            return False
-
+        print(f"[LOGIN] URL after login: {page.url}")
+        return True
     except Exception as e:
         print(f"[LOGIN ERROR] {e}")
         return False
 
 
 async def setup_browser(playwright):
-    global browser_context, page_ref
+    global page_ref
 
-    print("[BROWSER] Launching Chromium...")
+    print("[BROWSER] Launching...")
     browser = await playwright.chromium.launch(
         headless=True,
         args=[
@@ -132,57 +115,42 @@ async def setup_browser(playwright):
 
     context = await browser.new_context(
         viewport={"width": 1280, "height": 800},
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
         ignore_https_errors=True
     )
+
+    # Inject cookies to all domains including mirror
+    await inject_cookies(context)
 
     page = await context.new_page()
     page.set_default_timeout(120000)
 
-    # Step 1: Try cookies first
-    if XBET_COOKIES_JSON and XBET_COOKIES_JSON != "[]":
-        await inject_cookies(context)
-        print("[NAV] Trying with cookies...")
-        await page.goto(GAME_URL, wait_until="domcontentloaded", timeout=60000)
-        await asyncio.sleep(5)
-
-        ss = await page.screenshot(type="jpeg", quality=70)
-        data_store["last_screenshot"] = base64.standard_b64encode(ss).decode()
-
-        current = page.url
-        print(f"[NAV] Loaded: {current}")
-
-        # Check if logged in
-        page_text = await page.evaluate("() => document.body.innerText")
-        if "Please log in" in page_text or "login" in current or "block" in current:
-            print("[COOKIES] Cookies expired, trying username/password login...")
-            await do_login(page)
-        else:
-            print("[COOKIES] Cookies working!")
-    else:
-        # No cookies — use login directly
-        await do_login(page)
-
-    # Step 2: Navigate to game
-    print("[NAV] Navigating to Mega Sic Bo...")
+    # Navigate to game
+    print(f"[NAV] Opening: {GAME_URL}")
     await page.goto(GAME_URL, wait_until="domcontentloaded", timeout=60000)
-    await asyncio.sleep(8)
+    await asyncio.sleep(6)
 
-    # Take debug screenshot
+    current_url = page.url
+    print(f"[NAV] Loaded: {current_url}")
+
+    # Check login status
+    page_text = await page.evaluate("() => document.body.innerText")
+    is_logged_in = "Please log in" not in page_text and "LOG IN" not in page_text[:200]
+    print(f"[NAV] Logged in: {is_logged_in}")
+
+    if not is_logged_in:
+        print("[NAV] Not logged in, trying credentials...")
+        await do_login(page)
+        await page.goto(GAME_URL, wait_until="domcontentloaded", timeout=60000)
+        await asyncio.sleep(6)
+
+    # Screenshot for debug
     ss = await page.screenshot(type="jpeg", quality=70)
     data_store["last_screenshot"] = base64.standard_b64encode(ss).decode()
 
-    current = page.url
-    print(f"[NAV] Final URL: {current}")
+    # Update mirror domain for future use
+    data_store["mirror_url"] = page.url
 
-    # Check if still blocked
-    page_text = await page.evaluate("() => document.body.innerText")
-    if "Please log in" in page_text:
-        raise Exception("Login failed — check credentials or cookies")
-    if "block" in current:
-        raise Exception("IP blocked by 1xBet")
-
-    browser_context = context
     page_ref = page
     print("[NAV] Ready to scan!")
     return page
@@ -203,14 +171,12 @@ async def scrape_sic_bo():
     }
 
     try:
-        # Screenshot for debug
+        # Screenshot
         ss = await page_ref.screenshot(type="jpeg", quality=60)
         data_store["last_screenshot"] = base64.standard_b64encode(ss).decode()
 
-        # Get page text
+        # Check session
         page_text = await page_ref.evaluate("() => document.body.innerText")
-
-        # Check if still logged in
         if "Please log in" in page_text:
             print("[SCAN] Session expired! Re-logging in...")
             data_store["status"] = "re-login"
@@ -218,21 +184,15 @@ async def scrape_sic_bo():
             await page_ref.goto(GAME_URL, wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(8)
             page_text = await page_ref.evaluate("() => document.body.innerText")
+            data_store["status"] = "scanning"
 
         # Balance
-        balance_match = re.search(r'Rs\s*([\d,]+\.?\d*)', page_text)
-        if balance_match:
-            result["balance"] = "Rs " + balance_match.group(1)
+        bal = re.search(r'Rs\s*([\d,]+\.?\d*)', page_text)
+        if bal:
+            result["balance"] = "Rs " + bal.group(1)
 
-        # Game ID
-        id_match = re.search(r'ID[:\s#]*(\d{8,})', page_text)
-        if id_match:
-            result["game_id"] = id_match.group(1)
-
-        # Scan all frames
+        # Scan all frames for Sic Bo
         frames = page_ref.frames
-        print(f"[DOM] {len(frames)} frames found")
-
         for frame in frames:
             try:
                 furl = frame.url
@@ -243,15 +203,16 @@ async def scrape_sic_bo():
                     "() => document.body ? document.body.innerText : ''"
                 )
 
-                # Check Sic Bo visible
-                if not re.search(r'SIC.?BO|SMALL|ANY.?TRIPLE|4\s*-\s*10|11\s*-\s*17',
-                                  frame_text, re.IGNORECASE):
+                if not re.search(
+                    r'SIC.?BO|ANY.?TRIPLE|4\s*[-–]\s*10|11\s*[-–]\s*17|SMALL.*4|BIG.*11',
+                    frame_text, re.IGNORECASE
+                ):
                     continue
 
-                print(f"[FRAME] Sic Bo found in: {furl[:60]}")
+                print(f"[FRAME] Sic Bo in: {furl[:60]}")
                 result["game_visible"] = True
 
-                # BIG/SMALL/TRIPLE
+                # Result type
                 if re.search(r'\bTRIPLE\b', frame_text, re.IGNORECASE):
                     result["big_small"] = "TRIPLE"
                 elif re.search(r'\bBIG\b', frame_text, re.IGNORECASE):
@@ -264,58 +225,47 @@ async def scrape_sic_bo():
                     result["big_small"] = "EVEN"
 
                 # Chip sequence
-                chip_match = re.search(
+                chip = re.search(
                     r'\b([1-9])\s+([1-9])\s+([1-9])\s+(\d+)(?:\s+(\d+x?))?\b',
                     frame_text
                 )
-                if chip_match:
-                    parts = [chip_match.group(i) for i in range(1, 6) if chip_match.group(i)]
+                if chip:
+                    parts = [chip.group(i) for i in range(1,6) if chip.group(i)]
                     result["chips"] = " ".join(parts)
 
-                # Game ID from frame
-                fid_match = re.search(r'ID[:\s#]*(\d{8,})', frame_text)
-                if fid_match:
-                    result["game_id"] = fid_match.group(1)
+                # Game ID
+                gid = re.search(r'ID[:\s#]*(\d{8,})', frame_text)
+                if gid:
+                    result["game_id"] = gid.group(1)
 
-                # Dice total — find prominent number 4-17
-                all_nums = await frame.evaluate("""
+                # Dice total — largest font number 4-17
+                nums = await frame.evaluate("""
                     () => {
-                        const results = [];
-                        const els = document.querySelectorAll('*');
-                        for(const el of els) {
+                        const res = [];
+                        for(const el of document.querySelectorAll('*')) {
                             if(el.children.length === 0 && el.innerText) {
                                 const t = el.innerText.trim();
                                 const n = parseInt(t);
-                                if(!isNaN(n) && n >= 4 && n <= 17 && t === String(n)) {
-                                    const rect = el.getBoundingClientRect();
-                                    const style = window.getComputedStyle(el);
-                                    const fs = parseFloat(style.fontSize) || 12;
-                                    if(rect.width > 10 && rect.height > 10) {
-                                        results.push({
-                                            num: n,
-                                            area: rect.width * rect.height,
-                                            fontSize: fs
-                                        });
-                                    }
+                                if(!isNaN(n) && n>=4 && n<=17 && t===String(n)) {
+                                    const r = el.getBoundingClientRect();
+                                    const fs = parseFloat(window.getComputedStyle(el).fontSize)||12;
+                                    if(r.width>10 && r.height>10)
+                                        res.push({num:n, fs:fs, area:r.width*r.height});
                                 }
                             }
                         }
-                        results.sort((a,b) => (b.fontSize - a.fontSize) || (b.area - a.area));
-                        return results.slice(0, 5);
+                        res.sort((a,b)=>(b.fs-a.fs)||(b.area-a.area));
+                        return res.slice(0,5);
                     }
                 """)
 
-                if all_nums:
-                    print(f"[DOM] Numbers found: {all_nums}")
-                    result["dice_total"] = all_nums[0]["num"]
+                if nums:
+                    print(f"[DOM] Numbers: {nums}")
+                    result["dice_total"] = nums[0]["num"]
 
-                # Auto determine BIG/SMALL if not found
+                # Auto BIG/SMALL
                 if result["dice_total"] and not result["big_small"]:
-                    t = result["dice_total"]
-                    if t >= 11:
-                        result["big_small"] = "BIG"
-                    else:
-                        result["big_small"] = "SMALL"
+                    result["big_small"] = "BIG" if result["dice_total"] >= 11 else "SMALL"
 
                 break
 
@@ -371,16 +321,14 @@ async def scan_loop():
                             data_store["rounds"].insert(0, entry)
                             if len(data_store["rounds"]) > 500:
                                 data_store["rounds"] = data_store["rounds"][:500]
-
                             last_game_id = game_id
                             last_total = dice_total
                             print(f"[DATA] #{entry['id']}: {dice_total} {result.get('big_small')} | {chips}")
 
                         data_store["last_scan"] = datetime.now().isoformat()
                         data_store["status"] = "scanning"
-
                     else:
-                        print("[SCAN] Game not visible yet...")
+                        print("[SCAN] Game not visible...")
 
                 except Exception as e:
                     print(f"[SCAN ERROR] {e}")
@@ -411,14 +359,11 @@ def index():
 def start_scan():
     if data_store["scanning"]:
         return jsonify({"ok": False, "msg": "Already scanning"})
-
     data_store["scanning"] = True
     data_store["status"] = "starting"
     data_store["error"] = None
-
-    t = threading.Thread(target=run_async_loop, daemon=True)
-    t.start()
-    return jsonify({"ok": True, "msg": "Scan started"})
+    threading.Thread(target=run_async_loop, daemon=True).start()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/stop", methods=["POST"])
@@ -435,7 +380,8 @@ def get_status():
         "scanning": data_store["scanning"],
         "total_rounds": len(data_store["rounds"]),
         "last_scan": data_store["last_scan"],
-        "error": data_store["error"]
+        "error": data_store["error"],
+        "mirror": data_store.get("mirror_url", "")
     })
 
 
