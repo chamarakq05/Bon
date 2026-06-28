@@ -21,17 +21,15 @@ data_store = {
 }
 
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-
-XBET_USERNAME = os.environ.get("XBET_USERNAME")
-XBET_PASSWORD = os.environ.get("XBET_PASSWORD")
 SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL", "15"))
+XBET_COOKIES_JSON = os.environ.get("XBET_COOKIES", "[]")
 
 browser_context = None
 page_ref = None
 loop = None
 
 
-async def login_and_navigate(playwright):
+async def setup_browser_with_cookies(playwright):
     global browser_context, page_ref
 
     print("[BROWSER] Launching Chromium...")
@@ -42,7 +40,6 @@ async def login_and_navigate(playwright):
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
             "--disable-gpu",
-            "--disable-web-security",
             "--window-size=1280,800"
         ]
     )
@@ -53,92 +50,43 @@ async def login_and_navigate(playwright):
         ignore_https_errors=True
     )
 
-    page = await context.new_page()
-    page.set_default_timeout(120000)  # 2 minutes global timeout
-
-    # Step 1: Go directly to login page
-    print("[LOGIN] Going to login page...")
+    # Inject cookies
+    print("[COOKIES] Injecting session cookies...")
     try:
-        await page.goto(
-            "https://1xbet.com/en/login",
-            wait_until="domcontentloaded",
-            timeout=120000
-        )
+        cookies_raw = json.loads(XBET_COOKIES_JSON)
+        playwright_cookies = []
+        for c in cookies_raw:
+            cookie = {
+                "name": c["name"],
+                "value": c["value"],
+                "domain": c["domain"],
+                "path": c.get("path", "/"),
+                "secure": c.get("secure", False),
+                "httpOnly": c.get("httpOnly", False),
+            }
+            if not c.get("session", True) and c.get("expirationDate"):
+                cookie["expires"] = int(c["expirationDate"])
+            if c.get("sameSite") and c["sameSite"] not in [None, "null", "no_restriction"]:
+                same = c["sameSite"].capitalize()
+                if same in ["Strict", "Lax", "None"]:
+                    cookie["sameSite"] = same
+            playwright_cookies.append(cookie)
+
+        await context.add_cookies(playwright_cookies)
+        print(f"[COOKIES] Injected {len(playwright_cookies)} cookies")
     except Exception as e:
-        print(f"[LOGIN] Direct login page failed: {e}, trying main page...")
-        await page.goto(
-            "https://1xbet.com",
-            wait_until="domcontentloaded",
-            timeout=120000
-        )
+        print(f"[COOKIES ERROR] {e}")
+        raise Exception(f"Cookie injection failed: {e}")
 
-    await asyncio.sleep(5)
-    print(f"[LOGIN] Page loaded: {page.url}")
+    page = await context.new_page()
+    page.set_default_timeout(120000)
 
-    # Step 2: Fill login form
-    print("[LOGIN] Filling credentials...")
-    filled = False
-
-    # Try multiple selector strategies
-    selectors_user = [
-        "input[name='login']",
-        "input[name='user']",
-        "input[name='username']",
-        "input[type='text']:visible",
-        "input[placeholder*='Login']",
-        "input[placeholder*='login']",
-        "input[placeholder*='Email']",
-    ]
-
-    selectors_pass = [
-        "input[name='password']",
-        "input[type='password']:visible",
-        "input[placeholder*='Password']",
-        "input[placeholder*='password']",
-    ]
-
-    for sel in selectors_user:
-        try:
-            await page.fill(sel, XBET_USERNAME, timeout=5000)
-            print(f"[LOGIN] Username filled with: {sel}")
-            filled = True
-            break
-        except:
-            continue
-
-    if not filled:
-        # Take screenshot to debug
-        ss = await page.screenshot(type="jpeg", quality=70)
-        b64 = base64.standard_b64encode(ss).decode()
-        data_store["debug_screenshot"] = b64
-        raise Exception("Could not find username input field")
-
-    for sel in selectors_pass:
-        try:
-            await page.fill(sel, XBET_PASSWORD, timeout=5000)
-            print(f"[LOGIN] Password filled with: {sel}")
-            break
-        except:
-            continue
-
-    # Submit
-    try:
-        await page.click("button[type='submit']", timeout=10000)
-    except:
-        await page.keyboard.press("Enter")
-
-    print("[LOGIN] Submitted, waiting for redirect...")
-    await asyncio.sleep(8)
-    print(f"[LOGIN] After login URL: {page.url}")
-
-    # Step 3: Navigate to Mega Sic Bo
-    print("[NAV] Navigating to Mega Sic Bo...")
-
-    # Try direct game URLs
+    # Navigate directly to Mega Sic Bo
+    print("[NAV] Opening Mega Sic Bo...")
     game_urls = [
-        "https://1xbet.com/en/live-casino/game/mega-sic-bo",
-        "https://1xbet.com/en/casino/game/pragmatic-play-mega-sic-bo",
-        "https://1xbet.com/en/live/casino",
+        "https://lk.1xbet.com/en/live-casino/game/mega-sic-bo",
+        "https://lk.1xbet.com/en/casino/game/pragmatic-play-mega-sic-bo",
+        "https://lk.1xbet.com/en/live/casino",
     ]
 
     for url in game_urls:
@@ -146,15 +94,22 @@ async def login_and_navigate(playwright):
             print(f"[NAV] Trying: {url}")
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(5)
-            print(f"[NAV] Loaded: {page.url}")
+            current = page.url
+            print(f"[NAV] Loaded: {current}")
+            # Check if redirected to login (not logged in)
+            if "login" in current or "signin" in current:
+                print("[NAV] Redirected to login — cookies may be expired")
+                raise Exception("Cookies expired — please export fresh cookies")
             break
         except Exception as e:
             print(f"[NAV] Failed {url}: {e}")
+            if "expired" in str(e):
+                raise e
             continue
 
     browser_context = context
     page_ref = page
-    print("[NAV] Browser ready!")
+    print("[NAV] Ready to scan!")
     return page
 
 
@@ -169,6 +124,7 @@ async def capture_and_ocr():
         quality=85
     )
     b64 = base64.standard_b64encode(screenshot_bytes).decode()
+    data_store["last_screenshot"] = b64  # store for debug
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
@@ -185,20 +141,20 @@ async def capture_and_ocr():
                     "text": """This is a 1xBet Mega Sic Bo live casino screenshot.
 
 Extract:
-1. DICE TOTAL - main number (4-17) in the circle
-2. CHIP SEQUENCE - bottom row like "3 3 4 10" or "1 3 6 10 25x"
+1. DICE TOTAL - main number (4-17) in the spinning circle at top
+2. CHIP SEQUENCE - bottom row numbers like "3 3 4 10" or "1 3 6 10 25x"
 3. RESULT TYPE - BIG(11-17), SMALL(4-10), ODD, EVEN, or TRIPLE
-4. GAME ID - ID number shown
-5. BALANCE - Rs amount
+4. GAME ID - ID number shown (e.g. 15607313722)
+5. BALANCE - Rs amount shown
 
 Return ONLY valid JSON:
 {
   "dice_total": <integer or null>,
   "big_small": "<BIG|SMALL|ODD|EVEN|TRIPLE|null>",
-  "chips": "<string or null>",
+  "chips": "<string like '3 3 4 10' or null>",
   "game_id": "<string or null>",
   "balance": "<string or null>",
-  "game_visible": <true/false>
+  "game_visible": <true if Sic Bo table visible, false otherwise>
 }"""
                 }
             ]
@@ -207,9 +163,7 @@ Return ONLY valid JSON:
 
     text = message.content[0].text
     clean = text.replace("```json", "").replace("```", "").strip()
-    result = json.loads(clean)
-    result["screenshot_b64"] = b64
-    return result
+    return json.loads(clean)
 
 
 async def scan_loop():
@@ -217,9 +171,9 @@ async def scan_loop():
 
     async with async_playwright() as playwright:
         try:
-            data_store["status"] = "logging_in"
+            data_store["status"] = "connecting"
             data_store["error"] = None
-            await login_and_navigate(playwright)
+            await setup_browser_with_cookies(playwright)
             data_store["status"] = "scanning"
 
             last_game_id = None
@@ -259,9 +213,8 @@ async def scan_loop():
                             print(f"[DATA] Round {entry['id']}: {dice_total} {result.get('big_small')} | {chips}")
 
                         data_store["last_scan"] = datetime.now().isoformat()
-
                     else:
-                        print(f"[SCAN] Game not visible yet...")
+                        print("[SCAN] Game not visible yet, waiting...")
 
                 except Exception as e:
                     print(f"[SCAN ERROR] {e}")
@@ -292,8 +245,8 @@ def index():
 def start_scan():
     if data_store["scanning"]:
         return jsonify({"ok": False, "msg": "Already scanning"})
-    if not XBET_USERNAME or not XBET_PASSWORD:
-        return jsonify({"ok": False, "msg": "XBET_USERNAME / XBET_PASSWORD not set"})
+    if not XBET_COOKIES_JSON or XBET_COOKIES_JSON == "[]":
+        return jsonify({"ok": False, "msg": "XBET_COOKIES env var not set"})
 
     data_store["scanning"] = True
     data_store["status"] = "starting"
@@ -325,8 +278,7 @@ def get_status():
 @app.route("/api/rounds")
 def get_rounds():
     limit = int(request.args.get("limit", 100))
-    rounds = data_store["rounds"][:limit]
-    return jsonify({"rounds": rounds, "total": len(data_store["rounds"])})
+    return jsonify({"rounds": data_store["rounds"][:limit], "total": len(data_store["rounds"])})
 
 
 @app.route("/api/rounds/clear", methods=["POST"])
@@ -341,18 +293,17 @@ def export_csv():
     lines = ["Round,Dice Total,Big/Small,Chips,Game ID,Time"]
     for r in reversed(rows):
         lines.append(f"{r['id']},{r['dice_total']},{r.get('big_small','')},{r.get('chips','')},{r.get('game_id','')},{r['time']}")
-    csv_data = "\n".join(lines)
-    return Response(csv_data, mimetype="text/csv",
+    return Response("\n".join(lines), mimetype="text/csv",
                     headers={"Content-Disposition": "attachment;filename=sicbo_data.csv"})
 
 
 @app.route("/api/debug/screenshot")
 def debug_screenshot():
-    """Get latest screenshot for debugging"""
-    ss = data_store.get("debug_screenshot")
+    ss = data_store.get("last_screenshot")
     if ss:
-        return jsonify({"screenshot": ss})
-    return jsonify({"error": "No screenshot available"})
+        # Return as HTML image for easy viewing
+        return f'<img src="data:image/jpeg;base64,{ss}" style="max-width:100%">'
+    return jsonify({"error": "No screenshot yet"})
 
 
 if __name__ == "__main__":
