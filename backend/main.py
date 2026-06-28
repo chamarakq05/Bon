@@ -3,11 +3,11 @@ import json
 import base64
 import asyncio
 import threading
+import re
 from datetime import datetime
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 from playwright.async_api import async_playwright
-import anthropic
 
 app = Flask(__name__)
 CORS(app)
@@ -17,11 +17,11 @@ data_store = {
     "status": "idle",
     "last_scan": None,
     "error": None,
-    "scanning": False
+    "scanning": False,
+    "last_screenshot": None
 }
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL", "15"))
+SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL", "10"))
 XBET_COOKIES_JSON = os.environ.get("XBET_COOKIES", "[]")
 
 browser_context = None
@@ -29,7 +29,7 @@ page_ref = None
 loop = None
 
 
-async def setup_browser_with_cookies(playwright):
+async def setup_browser(playwright):
     global browser_context, page_ref
 
     print("[BROWSER] Launching Chromium...")
@@ -51,7 +51,7 @@ async def setup_browser_with_cookies(playwright):
     )
 
     # Inject cookies
-    print("[COOKIES] Injecting session cookies...")
+    print("[COOKIES] Injecting cookies...")
     try:
         cookies_raw = json.loads(XBET_COOKIES_JSON)
         playwright_cookies = []
@@ -66,104 +66,204 @@ async def setup_browser_with_cookies(playwright):
             }
             if not c.get("session", True) and c.get("expirationDate"):
                 cookie["expires"] = int(c["expirationDate"])
-            if c.get("sameSite") and c["sameSite"] not in [None, "null", "no_restriction"]:
-                same = c["sameSite"].capitalize()
-                if same in ["Strict", "Lax", "None"]:
-                    cookie["sameSite"] = same
+            ss = c.get("sameSite")
+            if ss and ss not in [None, "null", "no_restriction"]:
+                mapped = ss.capitalize()
+                if mapped in ["Strict", "Lax", "None"]:
+                    cookie["sameSite"] = mapped
             playwright_cookies.append(cookie)
 
         await context.add_cookies(playwright_cookies)
         print(f"[COOKIES] Injected {len(playwright_cookies)} cookies")
     except Exception as e:
-        print(f"[COOKIES ERROR] {e}")
         raise Exception(f"Cookie injection failed: {e}")
 
     page = await context.new_page()
     page.set_default_timeout(120000)
 
-    # Navigate directly to Mega Sic Bo
-    print("[NAV] Opening Mega Sic Bo...")
+    # Navigate to Mega Sic Bo
     game_urls = [
+        "https://1xbet.com/en/live-casino/game/mega-sic-bo",
         "https://lk.1xbet.com/en/live-casino/game/mega-sic-bo",
-        "https://lk.1xbet.com/en/casino/game/pragmatic-play-mega-sic-bo",
-        "https://lk.1xbet.com/en/live/casino",
+        "https://1xbet.com/en/casino/game/pragmatic-play-mega-sic-bo",
     ]
 
+    loaded = False
     for url in game_urls:
         try:
             print(f"[NAV] Trying: {url}")
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            await asyncio.sleep(5)
+            await asyncio.sleep(6)
             current = page.url
             print(f"[NAV] Loaded: {current}")
-            # Check if redirected to login (not logged in)
-            if "login" in current or "signin" in current:
-                print("[NAV] Redirected to login — cookies may be expired")
-                raise Exception("Cookies expired — please export fresh cookies")
+            if "login" in current or "block" in current or "signin" in current:
+                print(f"[NAV] Blocked/redirected at {url}, trying next...")
+                continue
+            loaded = True
             break
         except Exception as e:
             print(f"[NAV] Failed {url}: {e}")
-            if "expired" in str(e):
-                raise e
             continue
+
+    if not loaded:
+        # Take screenshot for debug
+        ss = await page.screenshot(type="jpeg", quality=70)
+        data_store["last_screenshot"] = base64.standard_b64encode(ss).decode()
+        raise Exception("Could not load Mega Sic Bo page — may be geo-blocked or cookies expired")
+
+    # Wait for game iframe to load
+    print("[NAV] Waiting for game to load...")
+    await asyncio.sleep(8)
 
     browser_context = context
     page_ref = page
-    print("[NAV] Ready to scan!")
+    print("[NAV] Ready!")
     return page
 
 
-async def capture_and_ocr():
+async def scrape_sic_bo():
+    """Extract Sic Bo data from DOM — no API cost"""
     global page_ref
     if not page_ref:
         return None
 
-    screenshot_bytes = await page_ref.screenshot(
-        full_page=False,
-        type="jpeg",
-        quality=85
-    )
-    b64 = base64.standard_b64encode(screenshot_bytes).decode()
-    data_store["last_screenshot"] = b64  # store for debug
+    result = {
+        "dice_total": None,
+        "big_small": None,
+        "chips": None,
+        "game_id": None,
+        "balance": None,
+        "game_visible": False
+    }
 
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=400,
-        messages=[{
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}
-                },
-                {
-                    "type": "text",
-                    "text": """This is a 1xBet Mega Sic Bo live casino screenshot.
+    try:
+        # Take screenshot for debug
+        ss = await page_ref.screenshot(type="jpeg", quality=70)
+        data_store["last_screenshot"] = base64.standard_b64encode(ss).decode()
 
-Extract:
-1. DICE TOTAL - main number (4-17) in the spinning circle at top
-2. CHIP SEQUENCE - bottom row numbers like "3 3 4 10" or "1 3 6 10 25x"
-3. RESULT TYPE - BIG(11-17), SMALL(4-10), ODD, EVEN, or TRIPLE
-4. GAME ID - ID number shown (e.g. 15607313722)
-5. BALANCE - Rs amount shown
+        # Try to get data from page DOM
+        page_text = await page_ref.evaluate("() => document.body.innerText")
 
-Return ONLY valid JSON:
-{
-  "dice_total": <integer or null>,
-  "big_small": "<BIG|SMALL|ODD|EVEN|TRIPLE|null>",
-  "chips": "<string like '3 3 4 10' or null>",
-  "game_id": "<string or null>",
-  "balance": "<string or null>",
-  "game_visible": <true if Sic Bo table visible, false otherwise>
-}"""
-                }
-            ]
-        }]
-    )
+        # Extract balance
+        balance_match = re.search(r'Rs\s*([\d,]+\.?\d*)', page_text)
+        if balance_match:
+            result["balance"] = "Rs " + balance_match.group(1)
 
-    text = message.content[0].text
-    clean = text.replace("```json", "").replace("```", "").strip()
-    return json.loads(clean)
+        # Extract game ID
+        id_match = re.search(r'ID[:\s]*(\d{10,})', page_text)
+        if id_match:
+            result["game_id"] = id_match.group(1)
+
+        # Try to find iframe with game content
+        frames = page_ref.frames
+        print(f"[DOM] Found {len(frames)} frames")
+
+        for frame in frames:
+            try:
+                frame_url = frame.url
+                if not frame_url or frame_url == "about:blank":
+                    continue
+                print(f"[FRAME] {frame_url[:80]}")
+
+                frame_text = await frame.evaluate("() => document.body ? document.body.innerText : ''")
+
+                # Look for dice total (number between 4-17 prominently displayed)
+                # Sic Bo shows result as standalone number
+                numbers = re.findall(r'\b([4-9]|1[0-7])\b', frame_text)
+
+                # Look for chip sequences like "3 3 4 10" or "1 3 6 10"
+                chip_match = re.search(r'\b([1-9])\s+([1-9])\s+([1-9])\s+(\d+)\b', frame_text)
+                if chip_match:
+                    result["chips"] = f"{chip_match.group(1)} {chip_match.group(2)} {chip_match.group(3)} {chip_match.group(4)}"
+
+                # Look for BIG/SMALL/ODD/EVEN/TRIPLE
+                if re.search(r'\bBIG\b', frame_text, re.IGNORECASE):
+                    result["big_small"] = "BIG"
+                elif re.search(r'\bSMALL\b', frame_text, re.IGNORECASE):
+                    result["big_small"] = "SMALL"
+                elif re.search(r'\bTRIPLE\b', frame_text, re.IGNORECASE):
+                    result["big_small"] = "TRIPLE"
+                elif re.search(r'\bODD\b', frame_text, re.IGNORECASE):
+                    result["big_small"] = "ODD"
+                elif re.search(r'\bEVEN\b', frame_text, re.IGNORECASE):
+                    result["big_small"] = "EVEN"
+
+                # Check if Sic Bo game is visible
+                if re.search(r'SIC\s*BO|SMALL|BIG|TRIPLE|ANY\s*TRIPLE', frame_text, re.IGNORECASE):
+                    result["game_visible"] = True
+
+                    # Try to extract dice total from DOM elements
+                    try:
+                        # Common selectors for result numbers in Pragmatic Play games
+                        selectors = [
+                            "[class*='result'] [class*='number']",
+                            "[class*='dice-total']",
+                            "[class*='total-number']",
+                            "[class*='result-number']",
+                            "[class*='game-result']",
+                            "[data-total]",
+                        ]
+                        for sel in selectors:
+                            try:
+                                el = await frame.query_selector(sel)
+                                if el:
+                                    txt = await el.inner_text()
+                                    num = int(txt.strip())
+                                    if 4 <= num <= 17:
+                                        result["dice_total"] = num
+                                        break
+                            except:
+                                continue
+
+                        # If selector failed, try JS evaluation
+                        if result["dice_total"] is None:
+                            # Look for the main displayed number
+                            all_nums = await frame.evaluate("""
+                                () => {
+                                    const els = document.querySelectorAll('*');
+                                    const results = [];
+                                    for(const el of els) {
+                                        if(el.children.length === 0) {
+                                            const t = el.innerText ? el.innerText.trim() : '';
+                                            const n = parseInt(t);
+                                            if(!isNaN(n) && n >= 4 && n <= 17 && t === String(n)) {
+                                                const rect = el.getBoundingClientRect();
+                                                if(rect.width > 20 && rect.height > 20) {
+                                                    results.push({num: n, size: rect.width * rect.height});
+                                                }
+                                            }
+                                        }
+                                    }
+                                    results.sort((a,b) => b.size - a.size);
+                                    return results.slice(0, 5);
+                                }
+                            """)
+                            if all_nums:
+                                result["dice_total"] = all_nums[0]["num"]
+                                print(f"[DOM] Found numbers: {all_nums}")
+
+                    except Exception as e:
+                        print(f"[DOM] Element extraction error: {e}")
+
+                    # Determine BIG/SMALL from total if not found
+                    if result["dice_total"] and not result["big_small"]:
+                        t = result["dice_total"]
+                        if t >= 11:
+                            result["big_small"] = "BIG"
+                        elif t <= 10:
+                            result["big_small"] = "SMALL"
+
+                    break
+
+            except Exception as e:
+                print(f"[FRAME] Error: {e}")
+                continue
+
+    except Exception as e:
+        print(f"[SCRAPE ERROR] {e}")
+        raise e
+
+    return result
 
 
 async def scan_loop():
@@ -173,7 +273,7 @@ async def scan_loop():
         try:
             data_store["status"] = "connecting"
             data_store["error"] = None
-            await setup_browser_with_cookies(playwright)
+            await setup_browser(playwright)
             data_store["status"] = "scanning"
 
             last_game_id = None
@@ -181,7 +281,7 @@ async def scan_loop():
 
             while data_store["scanning"]:
                 try:
-                    result = await capture_and_ocr()
+                    result = await scrape_sic_bo()
 
                     if result and result.get("game_visible"):
                         dice_total = result.get("dice_total")
@@ -214,7 +314,7 @@ async def scan_loop():
 
                         data_store["last_scan"] = datetime.now().isoformat()
                     else:
-                        print("[SCAN] Game not visible yet, waiting...")
+                        print(f"[SCAN] Game not visible, waiting...")
 
                 except Exception as e:
                     print(f"[SCAN ERROR] {e}")
@@ -246,7 +346,7 @@ def start_scan():
     if data_store["scanning"]:
         return jsonify({"ok": False, "msg": "Already scanning"})
     if not XBET_COOKIES_JSON or XBET_COOKIES_JSON == "[]":
-        return jsonify({"ok": False, "msg": "XBET_COOKIES env var not set"})
+        return jsonify({"ok": False, "msg": "XBET_COOKIES not set"})
 
     data_store["scanning"] = True
     data_store["status"] = "starting"
@@ -292,7 +392,7 @@ def export_csv():
     rows = data_store["rounds"]
     lines = ["Round,Dice Total,Big/Small,Chips,Game ID,Time"]
     for r in reversed(rows):
-        lines.append(f"{r['id']},{r['dice_total']},{r.get('big_small','')},{r.get('chips','')},{r.get('game_id','')},{r['time']}")
+        lines.append(f"{r['id']},{r.get('dice_total','')},{r.get('big_small','')},{r.get('chips','')},{r.get('game_id','')},{r['time']}")
     return Response("\n".join(lines), mimetype="text/csv",
                     headers={"Content-Disposition": "attachment;filename=sicbo_data.csv"})
 
@@ -301,9 +401,8 @@ def export_csv():
 def debug_screenshot():
     ss = data_store.get("last_screenshot")
     if ss:
-        # Return as HTML image for easy viewing
-        return f'<img src="data:image/jpeg;base64,{ss}" style="max-width:100%">'
-    return jsonify({"error": "No screenshot yet"})
+        return f'<html><body style="margin:0;background:#000"><img src="data:image/jpeg;base64,{ss}" style="max-width:100%;height:auto"></body></html>'
+    return jsonify({"error": "No screenshot yet — start scanning first"})
 
 
 if __name__ == "__main__":
