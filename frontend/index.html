@@ -2,261 +2,269 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#0b0f1a">
-<title>Sic Bo Live Dashboard</title>
+<title>Sic Bo Live</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Inter:wght@400;500;600;700&display=swap');
   :root {
     --bg:#0b0f1a; --surface:#141929; --card:#1a2035; --border:#252d45;
     --accent:#f5c842; --red:#e84545; --blue:#3498db; --green:#2ecc71;
-    --purple:#9b59b6; --text:#dde4f0; --muted:#5a6480;
-    --mono:'Share Tech Mono',monospace; --sans:'Inter',sans-serif;
+    --text:#dde4f0; --muted:#5a6480;
+    --mono:'Courier New',monospace;
   }
-  *{box-sizing:border-box;margin:0;padding:0;}
-  body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;display:flex;flex-direction:column;}
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
 
-  .header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:0;z-index:100;}
-  .logo{display:flex;align-items:center;gap:8px;}
-  .logo-text{font-family:var(--mono);font-size:13px;color:var(--accent);letter-spacing:.05em;}
-  .pill{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--muted);transition:all .3s;}
+  /* Header */
+  .hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;}
+  .hdr-left{display:flex;align-items:center;gap:8px;}
+  .hdr-title{font-family:var(--mono);font-size:13px;color:var(--accent);letter-spacing:.05em;}
+  .pill{display:flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;border:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--muted);}
   .pill.live{border-color:var(--green);color:var(--green);background:rgba(46,204,113,.08);}
-  .pill.scanning{border-color:var(--accent);color:var(--accent);background:rgba(245,200,66,.08);}
+  .pill.scanning{border-color:var(--accent);color:var(--accent);}
   .pill.error{border-color:var(--red);color:var(--red);}
-  .dot{width:7px;height:7px;border-radius:50%;background:currentColor;}
+  .dot{width:6px;height:6px;border-radius:50%;background:currentColor;}
   .pill.live .dot{animation:blink 1.2s infinite;}
   @keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
 
-  .controls{padding:12px 16px;display:flex;gap:8px;border-bottom:1px solid var(--border);background:var(--surface);}
-  .btn{flex:1;padding:10px 8px;border:none;border-radius:8px;font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.04em;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:5px;}
-  .btn-start{background:var(--accent);color:#0b0f1a;}
-  .btn-start:hover:not(:disabled){filter:brightness(1.1);}
-  .btn-start:disabled{opacity:.4;cursor:not-allowed;}
-  .btn-stop{background:var(--red);color:#fff;}
-  .btn-sm{flex:0 0 auto;padding:10px 14px;background:var(--card);color:var(--muted);border:1px solid var(--border);}
-  .btn-sm:hover{border-color:var(--muted);color:var(--text);}
+  /* Game frame area */
+  .game-wrap{flex:1;position:relative;background:#000;overflow:hidden;}
+  #game-frame{width:100%;height:100%;border:none;display:none;}
+  
+  .start-screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:30px;}
+  .start-screen.hidden{display:none;}
+  
+  .dice-big{font-size:64px;animation:float 3s ease-in-out infinite;}
+  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+  
+  .start-title{font-family:var(--mono);font-size:16px;color:var(--accent);text-align:center;letter-spacing:.05em;}
+  .start-sub{font-size:12px;color:var(--muted);text-align:center;line-height:1.7;max-width:280px;}
+  
+  .btn-start{
+    width:100%;max-width:280px;padding:16px;
+    background:var(--accent);color:#0b0f1a;
+    border:none;border-radius:12px;
+    font-family:var(--mono);font-size:15px;font-weight:700;
+    letter-spacing:.05em;cursor:pointer;
+    box-shadow:0 4px 20px rgba(245,200,66,.4);
+    transition:all .15s;
+  }
+  .btn-start:active{transform:scale(.97);}
 
-  .backend-row{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;}
-  .backend-input{flex:1;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:11px;outline:none;}
-  .backend-input:focus{border-color:var(--accent);}
-  .backend-label{font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;white-space:nowrap;}
+  /* Bottom panel */
+  .bottom{background:var(--surface);border-top:1px solid var(--border);flex-shrink:0;}
+  
+  /* Stats */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);}
+  .stat{background:var(--card);padding:8px 4px;text-align:center;}
+  .stat-val{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--accent);line-height:1;}
+  .stat-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;}
 
-  .stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border-bottom:1px solid var(--border);}
-  .stat{background:var(--surface);padding:10px 8px;text-align:center;}
-  .stat-val{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--accent);line-height:1;}
-  .stat-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:3px;}
-
-  .table-head{display:grid;grid-template-columns:36px 54px 1fr 76px 64px;padding:6px 16px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:57px;z-index:50;}
-  .th{font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;}
-
-  .data-list{flex:1;overflow-y:auto;}
-  .row{display:grid;grid-template-columns:36px 54px 1fr 76px 64px;padding:9px 16px;border-bottom:1px solid rgba(37,45,69,.5);align-items:center;animation:rowIn .25s ease;}
-  @keyframes rowIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
-  .row:nth-child(even){background:rgba(26,32,53,.4);}
-  .rn{font-family:var(--mono);font-size:10px;color:var(--muted);}
-  .rtotal{font-family:var(--mono);font-size:19px;font-weight:700;color:var(--text);}
-  .rchips{font-family:var(--mono);font-size:11px;color:var(--accent);}
-  .badge{padding:2px 7px;border-radius:4px;font-family:var(--mono);font-size:10px;font-weight:700;}
+  /* Last result */
+  .last-result{display:none;padding:10px 14px;border-bottom:1px solid var(--border);}
+  .last-result.visible{display:flex;align-items:center;gap:10px;}
+  .lr-label{font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;}
+  .lr-total{font-family:var(--mono);font-size:28px;font-weight:700;color:var(--text);}
+  .lr-badge{padding:3px 10px;border-radius:5px;font-family:var(--mono);font-size:12px;font-weight:700;}
   .BIG{background:rgba(232,69,69,.18);color:var(--red);}
   .SMALL{background:rgba(52,152,219,.18);color:var(--blue);}
-  .ODD{background:rgba(155,89,182,.18);color:var(--purple);}
+  .ODD{background:rgba(155,89,182,.18);color:#9b59b6;}
   .EVEN{background:rgba(46,204,113,.18);color:var(--green);}
   .TRIPLE{background:rgba(245,200,66,.18);color:var(--accent);}
-  .rtime{font-family:var(--mono);font-size:10px;color:var(--muted);text-align:right;}
+  .lr-chips{font-family:var(--mono);font-size:11px;color:var(--accent);margin-left:auto;}
 
-  .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;text-align:center;gap:10px;}
-  .empty-icon{font-size:44px;opacity:.25;}
-  .empty-title{font-family:var(--mono);font-size:13px;color:var(--muted);}
-  .empty-sub{font-size:11px;color:var(--muted);opacity:.6;line-height:1.7;max-width:240px;}
+  /* Recent rounds */
+  .rounds-wrap{max-height:140px;overflow-y:auto;}
+  .round-row{display:grid;grid-template-columns:30px 48px 1fr 70px 56px;padding:7px 14px;border-bottom:1px solid rgba(37,45,69,.4);align-items:center;}
+  .round-row:nth-child(even){background:rgba(26,32,53,.3);}
+  .rn{font-family:var(--mono);font-size:9px;color:var(--muted);}
+  .rtotal{font-family:var(--mono);font-size:17px;font-weight:700;}
+  .rchips{font-family:var(--mono);font-size:10px;color:var(--accent);}
+  .rtime{font-family:var(--mono);font-size:9px;color:var(--muted);text-align:right;}
 
-  .logbar{padding:7px 16px;background:var(--surface);border-top:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--muted);min-height:32px;display:flex;align-items:center;gap:6px;position:sticky;bottom:0;}
+  /* Stop button */
+  .btn-stop{width:100%;padding:10px;background:var(--red);color:#fff;border:none;font-family:var(--mono);font-size:12px;font-weight:700;cursor:pointer;display:none;}
+  .btn-stop.visible{display:block;}
+
+  /* Log */
+  .logbar{padding:6px 14px;font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;}
   .logbar.ok{color:var(--green);}
   .logbar.err{color:var(--red);}
 
-  .fab{position:fixed;bottom:44px;right:14px;width:44px;height:44px;border-radius:50%;background:var(--accent);color:#0b0f1a;border:none;font-size:17px;cursor:pointer;display:none;align-items:center;justify-content:center;box-shadow:0 4px 18px rgba(245,200,66,.4);z-index:200;}
-  .fab.show{display:flex;}
+  /* Scanning overlay */
+  .scan-overlay{display:none;position:absolute;top:8px;right:8px;background:rgba(245,200,66,.9);color:#0b0f1a;padding:4px 10px;border-radius:20px;font-family:var(--mono);font-size:10px;font-weight:700;animation:pulse2 1s infinite;}
+  .scan-overlay.visible{display:block;}
+  @keyframes pulse2{0%,100%{opacity:1}50%{opacity:.6}}
 </style>
 </head>
 <body>
 
-<div class="header">
-  <div class="logo">
+<!-- Header -->
+<div class="hdr">
+  <div class="hdr-left">
     <span style="font-size:18px">🎲</span>
-    <span class="logo-text">SIC BO // LIVE</span>
+    <span class="hdr-title">SIC BO // LIVE</span>
   </div>
   <div class="pill" id="pill"><div class="dot"></div><span id="pill-txt">IDLE</span></div>
 </div>
 
-<!-- Backend URL input -->
-<div class="backend-row">
-  <span class="backend-label">API:</span>
-  <input class="backend-input" id="backend-url" placeholder="https://your-app.railway.app" value="">
-  <button class="btn btn-sm" onclick="saveUrl()" style="font-size:11px;padding:7px 10px;">SAVE</button>
-</div>
-
-<!-- Controls -->
-<div class="controls">
-  <button class="btn btn-start" id="btn-start" onclick="startScan()">▶ START</button>
-  <button class="btn btn-stop" id="btn-stop" onclick="stopScan()" style="display:none">■ STOP</button>
-  <button class="btn btn-sm" onclick="clearData()" title="Clear">🗑</button>
-  <button class="btn btn-sm" onclick="exportCSV()" title="Export CSV">⬇</button>
-</div>
-
-<!-- Stats -->
-<div class="stats-bar">
-  <div class="stat"><div class="stat-val" id="s-total">0</div><div class="stat-lbl">Rounds</div></div>
-  <div class="stat"><div class="stat-val" id="s-big" style="color:var(--red)">0</div><div class="stat-lbl">Big</div></div>
-  <div class="stat"><div class="stat-val" id="s-small" style="color:var(--blue)">0</div><div class="stat-lbl">Small</div></div>
-  <div class="stat"><div class="stat-val" id="s-triple" style="color:var(--accent)">0</div><div class="stat-lbl">Triple</div></div>
-</div>
-
-<!-- Table -->
-<div class="table-head">
-  <span class="th">#</span>
-  <span class="th">Total</span>
-  <span class="th">Chips</span>
-  <span class="th">Result</span>
-  <span class="th" style="text-align:right">Time</span>
-</div>
-
-<div class="data-list" id="data-list">
-  <div class="empty" id="empty">
-    <div class="empty-icon">🎲</div>
-    <div class="empty-title">No data yet</div>
-    <div class="empty-sub">Railway URL paste කරලා START click කරන්න. Backend eka 1xBet login කරලා auto scan කරනවා.</div>
+<!-- Game Area -->
+<div class="game-wrap" id="game-wrap">
+  <!-- Start Screen -->
+  <div class="start-screen" id="start-screen">
+    <div class="dice-big">🎲</div>
+    <div class="start-title">MEGA SIC BO<br>DATA COLLECTOR</div>
+    <div class="start-sub">START click කරන්න → 1xBet Mega Sic Bo open වෙනවා → Game play වෙනකොට data auto collect වෙනවා</div>
+    <button class="btn-start" id="btn-start" onclick="startGame()">▶ START COLLECTING</button>
   </div>
+
+  <!-- Game Frame -->
+  <iframe id="game-frame" src="" allowfullscreen></iframe>
+  <div class="scan-overlay" id="scan-overlay">● SCANNING</div>
 </div>
 
-<div class="logbar" id="logbar">— <span id="log-txt">Ready</span></div>
-<button class="fab" id="fab" onclick="exportCSV()">⬇</button>
+<!-- Bottom Panel -->
+<div class="bottom">
+  <!-- Last Result -->
+  <div class="last-result" id="last-result">
+    <div>
+      <div class="lr-label">Last Result</div>
+      <div class="lr-total" id="lr-total">—</div>
+    </div>
+    <span class="lr-badge" id="lr-badge">—</span>
+    <span class="lr-chips" id="lr-chips"></span>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat"><div class="stat-val" id="s-total">0</div><div class="stat-lbl">Rounds</div></div>
+    <div class="stat"><div class="stat-val" id="s-big" style="color:var(--red)">0</div><div class="stat-lbl">Big</div></div>
+    <div class="stat"><div class="stat-val" id="s-small" style="color:var(--blue)">0</div><div class="stat-lbl">Small</div></div>
+    <div class="stat"><div class="stat-val" id="s-triple" style="color:var(--accent)">0</div><div class="stat-lbl">Triple</div></div>
+  </div>
+
+  <!-- Recent rounds -->
+  <div class="rounds-wrap" id="rounds-wrap"></div>
+
+  <!-- Stop -->
+  <button class="btn-stop" id="btn-stop" onclick="stopGame()">■ STOP</button>
+
+  <!-- Log -->
+  <div class="logbar" id="logbar">Ready</div>
+</div>
 
 <script>
+const BACKEND = 'https://bon-production-5569.up.railway.app';
+const GAME_URL = 'https://1xlite-03864.pro/en/casino-search?game=56264&platform_type=mobile';
+
 let pollId = null;
 let rounds = [];
+let scanning = false;
 
-const API = () => localStorage.getItem('sicbo_backend') || '';
+function startGame() {
+  // Show game frame
+  document.getElementById('start-screen').classList.add('hidden');
+  document.getElementById('game-frame').src = GAME_URL;
+  document.getElementById('game-frame').style.display = 'block';
+  document.getElementById('scan-overlay').classList.add('visible');
+  document.getElementById('btn-stop').classList.add('visible');
+  
+  setPill('scanning', 'STARTING');
+  log('1xBet Mega Sic Bo loading...', '');
 
-// Load saved URL
-window.onload = () => {
-  const saved = localStorage.getItem('sicbo_backend');
-  if (saved) document.getElementById('backend-url').value = saved;
-  pollStatus();
-};
-
-function saveUrl() {
-  const url = document.getElementById('backend-url').value.trim().replace(/\/$/, '');
-  localStorage.setItem('sicbo_backend', url);
-  log('Backend URL saved: ' + url, '');
+  // Tell backend to start scanning
+  fetch(BACKEND + '/api/start', {method:'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if(d.ok) {
+        scanning = true;
+        startPolling();
+        log('Scanning started!', 'ok');
+        setPill('live', 'LIVE');
+      } else {
+        log('Backend: ' + d.msg, 'err');
+      }
+    })
+    .catch(e => log('Backend error: ' + e.message, 'err'));
 }
 
-async function startScan() {
-  const url = API();
-  if (!url) { log('Railway URL enter කරන්න!', 'err'); return; }
-  try {
-    const r = await fetch(url + '/api/start', { method: 'POST' });
-    const d = await r.json();
-    if (d.ok) {
-      setPill('scanning', 'STARTING');
-      document.getElementById('btn-start').style.display = 'none';
-      document.getElementById('btn-stop').style.display = 'flex';
-      log('Scan started — logging in to 1xBet...', 'ok');
-      startPolling();
-    } else {
-      log('Error: ' + d.msg, 'err');
-    }
-  } catch(e) { log('Cannot reach backend: ' + e.message, 'err'); }
-}
-
-async function stopScan() {
-  const url = API();
-  try {
-    await fetch(url + '/api/stop', { method: 'POST' });
-  } catch(e) {}
-  stopPolling();
+function stopGame() {
+  scanning = false;
+  if(pollId) clearInterval(pollId);
+  
+  fetch(BACKEND + '/api/stop', {method:'POST'}).catch(()=>{});
+  
+  document.getElementById('game-frame').src = '';
+  document.getElementById('game-frame').style.display = 'none';
+  document.getElementById('start-screen').classList.remove('hidden');
+  document.getElementById('scan-overlay').classList.remove('visible');
+  document.getElementById('btn-stop').classList.remove('visible');
+  
   setPill('', 'IDLE');
-  document.getElementById('btn-start').style.display = 'flex';
-  document.getElementById('btn-stop').style.display = 'none';
   log('Stopped.', '');
 }
 
 function startPolling() {
-  if (pollId) clearInterval(pollId);
+  if(pollId) clearInterval(pollId);
   fetchData();
-  pollId = setInterval(fetchData, 5000); // poll every 5s
-}
-
-function stopPolling() {
-  if (pollId) clearInterval(pollId);
-  pollId = null;
-}
-
-async function pollStatus() {
-  const url = API();
-  if (!url) return;
-  try {
-    const r = await fetch(url + '/api/status');
-    const d = await r.json();
-    updatePillFromStatus(d.status);
-    if (d.scanning) {
-      document.getElementById('btn-start').style.display = 'none';
-      document.getElementById('btn-stop').style.display = 'flex';
-      if (!pollId) startPolling();
-    }
-  } catch(e) {}
+  pollId = setInterval(fetchData, 5000);
 }
 
 async function fetchData() {
-  const url = API();
-  if (!url) return;
   try {
-    // Fetch status
-    const sr = await fetch(url + '/api/status');
-    const status = await sr.json();
-    updatePillFromStatus(status.status);
-    if (status.error) log('Backend error: ' + status.error, 'err');
-    if (status.last_scan) log('Last scan: ' + new Date(status.last_scan).toLocaleTimeString(), 'ok');
+    const [sr, rr] = await Promise.all([
+      fetch(BACKEND + '/api/status').then(r=>r.json()),
+      fetch(BACKEND + '/api/rounds?limit=50').then(r=>r.json())
+    ]);
 
-    // Fetch rounds
-    const rr = await fetch(url + '/api/rounds?limit=200');
-    const data = await rr.json();
-    if (data.rounds) {
-      rounds = data.rounds;
-      renderTable();
+    // Update status
+    const statusMap = {
+      'idle':'IDLE', 'starting':'STARTING', 'connecting':'CONNECTING',
+      'scanning':'LIVE', 're-login':'RE-LOGIN', 'error':'ERROR'
+    };
+    const pillMap = {
+      'scanning':'live', 'error':'error', 'starting':'scanning', 'connecting':'scanning'
+    };
+    setPill(pillMap[sr.status]||'', statusMap[sr.status]||sr.status.toUpperCase());
+
+    if(sr.error) log('Error: ' + sr.error, 'err');
+    if(sr.last_scan) log('Last scan: ' + new Date(sr.last_scan).toLocaleTimeString(), 'ok');
+
+    // Show last result
+    if(sr.last_result) {
+      const lr = sr.last_result;
+      document.getElementById('last-result').classList.add('visible');
+      document.getElementById('lr-total').textContent = lr.dice_total || '—';
+      const badge = document.getElementById('lr-badge');
+      badge.textContent = lr.big_small || '—';
+      badge.className = 'lr-badge ' + (lr.big_small || '');
+      document.getElementById('lr-chips').textContent = lr.chips || '';
+    }
+
+    // Rounds
+    if(rr.rounds) {
+      rounds = rr.rounds;
+      renderRounds();
       updateStats();
     }
+
   } catch(e) {
-    log('Fetch error: ' + e.message, 'err');
+    log('Poll error: ' + e.message, 'err');
   }
 }
 
-function updatePillFromStatus(s) {
-  const map = {
-    'idle': ['', 'IDLE'],
-    'starting': ['scanning', 'STARTING'],
-    'logging_in': ['scanning', 'LOGIN...'],
-    'scanning': ['live', 'LIVE'],
-    'error': ['error', 'ERROR']
-  };
-  const [cls, txt] = map[s] || ['', s.toUpperCase()];
-  setPill(cls, txt);
-}
-
-function renderTable() {
-  const list = document.getElementById('data-list');
-  if (!rounds.length) {
-    list.innerHTML = '<div class="empty" id="empty"><div class="empty-icon">🎲</div><div class="empty-title">Scanning...</div><div class="empty-sub">Waiting for first Sic Bo round result...</div></div>';
-    return;
-  }
-  list.innerHTML = rounds.map((r, i) => `
-    <div class="row">
+function renderRounds() {
+  const wrap = document.getElementById('rounds-wrap');
+  if(!rounds.length) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = rounds.slice(0,10).map(r => `
+    <div class="round-row">
       <span class="rn">${r.id}</span>
-      <span class="rtotal">${r.dice_total ?? '—'}</span>
-      <span class="rchips">${r.chips || '—'}</span>
-      <span><span class="badge ${r.big_small || ''}">${r.big_small || '—'}</span></span>
+      <span class="rtotal">${r.dice_total||'—'}</span>
+      <span class="rchips">${r.chips||'—'}</span>
+      <span><span class="lr-badge ${r.big_small||''}">${r.big_small||'—'}</span></span>
       <span class="rtime">${r.time}</span>
     </div>
   `).join('');
-  document.getElementById('fab').classList.add('show');
 }
 
 function updateStats() {
@@ -266,37 +274,16 @@ function updateStats() {
   document.getElementById('s-triple').textContent = rounds.filter(r=>r.big_small==='TRIPLE').length;
 }
 
-async function clearData() {
-  if (!confirm('Data clear කරන්නද?')) return;
-  try { await fetch(API() + '/api/rounds/clear', {method:'POST'}); } catch(e) {}
-  rounds = [];
-  renderTable();
-  updateStats();
-}
-
-function exportCSV() {
-  const url = API();
-  if (url) { window.open(url + '/api/export/csv'); return; }
-  // fallback local
-  const lines = ['Round,Dice Total,Big/Small,Chips,Time'];
-  rounds.forEach(r => lines.push(`${r.id},${r.dice_total},${r.big_small},${r.chips||''},${r.time}`));
-  const blob = new Blob([lines.join('\n')], {type:'text/csv'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'sicbo.csv';
-  a.click();
-}
-
 function setPill(cls, txt) {
   const p = document.getElementById('pill');
-  p.className = 'pill' + (cls ? ' '+cls : '');
+  p.className = 'pill' + (cls?' '+cls:'');
   document.getElementById('pill-txt').textContent = txt;
 }
 
 function log(msg, cls) {
   const lb = document.getElementById('logbar');
-  lb.className = 'logbar' + (cls ? ' '+cls : '');
-  document.getElementById('log-txt').textContent = msg;
+  lb.className = 'logbar' + (cls?' '+cls:'');
+  lb.textContent = msg;
 }
 </script>
 </body>
